@@ -1,7 +1,8 @@
 const std = @import("std");
-const source = @import("lexer/source.zig");
+const Stat = std.fs.File.Stat;
 const Lexer = @import("lexer/lexer.zig").Lexer;
 const Interner = @import("lexer/interner.zig").Interner;
+const Ast = @import("parser/Ast.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -19,18 +20,11 @@ pub fn main() !void {
     };
     const file = try std.fs.cwd().openFile(filename, .{ .mode = .read_only });
     defer file.close();
-    var file_reader = file.reader();
 
-    var source_reader = try source.SourceReader(@TypeOf(file_reader)).init(file_reader, allocator);
-    defer source_reader.deinit();
+    const source = try file.readToEndAllocOptions(allocator, 1_000_000_000, null, @alignOf(u8), 0);
+    defer allocator.free(source);
 
-    var interner = Interner.init(allocator);
-    defer interner.deinit();
-
-    var lexer = Lexer(@TypeOf(source_reader)).init(&source_reader, &interner);
-
-    var tokens = try lexer.tokenize(allocator);
-    defer tokens.deinit();
-
-    std.debug.print("{}\n", .{tokens});
+    var ast = try Ast.init_parse(allocator, source);
+    std.debug.print("{}\n", .{ast});
+    defer ast.deinit();
 }

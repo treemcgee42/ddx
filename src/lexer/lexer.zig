@@ -1,11 +1,7 @@
 const std = @import("std");
-const SourceSpan = @import("source.zig").SourceSpan;
 const Interner = @import("interner.zig").Interner;
 
 pub const TokenKind = union(enum) {
-    Unknown,
-    Eof,
-
     /// Just a source span, used to indicate "this section shouldn't be parsed,
     /// just put it in as is."
     RawInput,
@@ -13,7 +9,8 @@ pub const TokenKind = union(enum) {
     /// RawInput is because we care about the value of the identifier, and
     /// RawInput only tracks the source code span. If we know at lexer time
     /// that this is an identifier, we can intern its value.
-    Identifier: []const u8,
+    Identifier,
+    command,
 
     Begin,
     End,
@@ -21,11 +18,15 @@ pub const TokenKind = union(enum) {
     Newline,
 
     Dollar,
+    double_dollar,
     Backslash,
     LBrace,
     RBrace,
     LBracket,
     RBracket,
+
+    eof,
+    invalid,
 
     pub fn format(
         self: TokenKind,
@@ -36,11 +37,6 @@ pub const TokenKind = union(enum) {
         _ = fmt;
         _ = options;
 
-        if (self == .Identifier) {
-            try writer.print("Identifier({s})", .{self.Identifier});
-            return;
-        }
-
         try writer.print("{s}", .{@tagName(self)});
     }
 };
@@ -48,6 +44,11 @@ pub const TokenKind = union(enum) {
 pub const Token = struct {
     kind: TokenKind,
     span: SourceSpan,
+
+    pub const SourceSpan = struct {
+        start: usize,
+        end: usize,
+    };
 
     pub fn format(
         self: Token,
@@ -58,253 +59,316 @@ pub const Token = struct {
         _ = fmt;
         _ = options;
 
-        try writer.print("Token( kind: {}, span: {} )", .{
-            self.kind,
-            self.span,
-        });
+        try writer.print("Token( kind: {}, span: {}-{} )", .{ self.kind, self.span.start, self.span.end });
     }
 };
 
-pub const TokenStream = struct {
-    tokens: std.ArrayList(Token),
+pub const Lexer = struct {
+    source: [:0]const u8,
+    current_source_index: usize,
+    state: LexerState,
 
-    pub fn format(
-        self: TokenStream,
-        comptime fmt: []const u8,
-        options: std.fmt.FormatOptions,
-        writer: anytype,
-    ) !void {
-        _ = fmt;
-        _ = options;
+    const LexerState = enum {
+        start,
+        expecting_identifier,
+        started_identifier,
+        prev_was_backslash,
+        accepting_raw_input,
+        prev_was_dollar,
+    };
 
-        try writer.print("TokenStream( tokens:", .{});
+    const Self = @This();
 
-        for (self.tokens.items) |token| {
-            try writer.print("\n\t{}", .{token});
-        }
-
-        try writer.print("\n)", .{});
+    /// The caller is responsible for ensuring the source is valid for the
+    /// lifetime of an instance of this type.
+    pub fn init(source: [:0]const u8) Self {
+        return Self{
+            .source = source,
+            .current_source_index = 0,
+            .state = .start,
+        };
     }
 
-    pub fn deinit(self: *TokenStream) void {
-        self.tokens.deinit();
-    }
-};
+    /// Returns `null` if the end of the stream is reached.
+    pub fn eat_token(self: *Self) Token {
+        var start = self.current_source_index;
+        var end: usize = undefined;
 
-pub fn Lexer(comptime SourceReaderType: type) type {
-    return struct {
-        source: *SourceReaderType,
-        interner: *Interner,
-        prev_token: ?Token,
-        expecting_identifier: bool,
+        self.state = .start;
+        var token_kind: TokenKind = undefined;
 
-        const Self = @This();
+        while (true) {
+            const c = self.source[self.current_source_index];
 
-        pub fn init(source: *SourceReaderType, interner: *Interner) Self {
-            return Self{
-                .source = source,
-                .interner = interner,
-                .prev_token = null,
-                .expecting_identifier = false,
-            };
-        }
+            if (self.state == .prev_was_dollar and c != '$') {
+                end = self.current_source_index;
 
-        fn eat_raw_input(self: *Self) Token {
-            const start_pos = self.source.current_source_position;
-            var end_pos = start_pos;
-
-            while (true) {
-                const next_c = self.source.peek() orelse break;
-
-                if (next_c == '\\' or next_c == '\n' or next_c == '$' or next_c == '{' or next_c == '}') {
-                    break;
-                }
-
-                _ = self.source.next();
-                end_pos = self.source.current_source_position;
-            }
-
-            return Token{
-                .kind = .RawInput,
-                .span = .{
-                    .start = start_pos,
-                    .end = end_pos,
-                },
-            };
-        }
-
-        fn eat_identifier(self: *Self) Token {
-            const start_pos = self.source.current_source_position;
-            var end_pos = start_pos;
-
-            var buf = [_]u8{0} ** 512;
-            var buf_len: usize = 0;
-
-            while (true) {
-                const next_c = self.source.peek() orelse break;
-
-                if (next_c == '{' or next_c == '}') {
-                    break;
-                }
-
-                if (self.prev_token.?.kind == .Backslash) {
-                    if (next_c == ' ' or next_c == '\n' or next_c == '\t' or next_c == '[' or next_c == ']') {
-                        break;
-                    }
-                }
-
-                _ = self.source.next();
-                end_pos = self.source.current_source_position;
-
-                const bytes_written = std.unicode.utf8Encode(next_c, buf[buf_len..]) catch {
-                    @panic("Identifier too long.");
-                };
-                buf_len += bytes_written;
-            }
-
-            const interned_str = self.interner.intern(buf[0..buf_len]) catch |err| {
-                std.debug.panic("interner error: {}", .{err});
-            };
-            return Token{
-                .kind = .{ .Identifier = interned_str },
-                .span = .{
-                    .start = start_pos,
-                    .end = end_pos,
-                },
-            };
-        }
-
-        /// Returns `null` if the end of the stream is reached.
-        fn eat_token(self: *Self) ?Token {
-            const first_c = self.source.peek() orelse {
-                return null;
-            };
-
-            if (first_c == '\n') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
-                var end_pos = start_pos;
-
-                // Eat remaining newlines.
-                while (true) {
-                    if (self.source.peek() != '\n') {
-                        break;
-                    }
-
-                    _ = self.source.next();
-                    end_pos = self.source.current_source_position;
-                }
-
-                return Token{ .kind = .Newline, .span = .{
-                    .start = start_pos,
-                    .end = end_pos,
-                } };
-            }
-
-            if (first_c == '$') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
-
-                return Token{
+                return .{
                     .kind = .Dollar,
                     .span = .{
-                        .start = start_pos,
-                        .end = start_pos,
+                        .start = start,
+                        .end = end,
                     },
                 };
             }
 
-            if (first_c == '\\') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
+            switch (c) {
+                0 => {
+                    if (self.current_source_index == self.source.len) {
+                        end = self.current_source_index;
 
-                self.expecting_identifier = true;
+                        return .{
+                            .kind = .eof,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
 
-                return Token{
-                    .kind = .Backslash,
-                    .span = .{
-                        .start = start_pos,
-                        .end = start_pos,
-                    },
-                };
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+
+                    return .{
+                        .kind = .invalid,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
+
+                '\\' => {
+                    if (self.state == .accepting_raw_input) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = .RawInput,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.state = .prev_was_backslash;
+                    self.current_source_index += 1;
+                },
+
+                'a'...'z', 'A'...'Z' => {
+                    if (self.state == .prev_was_backslash) {
+                        token_kind = .command;
+                        self.state = .started_identifier;
+                        self.current_source_index += 1;
+                        continue;
+                    }
+
+                    if (self.state == .started_identifier) {
+                        self.current_source_index += 1;
+                        continue;
+                    }
+
+                    token_kind = .RawInput;
+                    self.state = .accepting_raw_input;
+                    self.current_source_index += 1;
+                },
+
+                '0'...'9', '=', '.', ',', '!', '/' => {
+                    token_kind = .RawInput;
+                    self.state = .accepting_raw_input;
+                    self.current_source_index += 1;
+                },
+
+                '[' => {
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+                    return .{
+                        .kind = .LBracket,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
+
+                ']' => {
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+                    return .{
+                        .kind = .RBracket,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
+
+                '{' => {
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+                    return .{
+                        .kind = .LBrace,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
+
+                '}' => {
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+                    return .{
+                        .kind = .RBrace,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
+
+                '\n', '\t', ' ' => {
+                    if (self.state == .start) {
+                        start += 1;
+                        self.current_source_index += 1;
+                        continue;
+                    }
+
+                    if (self.state != .accepting_raw_input) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                },
+
+                '$' => {
+                    if (self.state == .prev_was_dollar) {
+                        self.current_source_index += 1;
+                        end = self.current_source_index;
+
+                        return .{ .kind = .double_dollar, .span = .{
+                            .start = start,
+                            .end = end,
+                        } };
+                    }
+
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.state = .prev_was_dollar;
+                    self.current_source_index += 1;
+                },
+
+                else => {
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+
+                    return .{
+                        .kind = .invalid,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
             }
-
-            if (first_c == '{') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
-
-                self.expecting_identifier = true;
-
-                return Token{
-                    .kind = .LBrace,
-                    .span = .{
-                        .start = start_pos,
-                        .end = start_pos,
-                    },
-                };
-            }
-
-            if (first_c == '}') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
-
-                return Token{
-                    .kind = .RBrace,
-                    .span = .{
-                        .start = start_pos,
-                        .end = start_pos,
-                    },
-                };
-            }
-
-            if (first_c == '[') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
-
-                return Token{
-                    .kind = .LBracket,
-                    .span = .{
-                        .start = start_pos,
-                        .end = start_pos,
-                    },
-                };
-            }
-
-            if (first_c == ']') {
-                _ = self.source.next();
-                const start_pos = self.source.current_source_position;
-
-                return Token{
-                    .kind = .RBracket,
-                    .span = .{
-                        .start = start_pos,
-                        .end = start_pos,
-                    },
-                };
-            }
-
-            if (self.expecting_identifier) {
-                self.expecting_identifier = false;
-
-                return self.eat_identifier();
-            }
-
-            return self.eat_raw_input();
         }
+    }
+};
 
-        /// Caller is responsible for calling `deinit()` on the token stream when done.
-        pub fn tokenize(self: *Self, allocator: std.mem.Allocator) !TokenStream {
-            var tokens = std.ArrayList(Token).init(allocator);
+test "print tokens" {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
 
-            while (true) {
-                const token = self.eat_token() orelse break;
-                self.prev_token = token;
-                try tokens.append(token);
-            }
+    var args = try std.process.argsWithAllocator(allocator);
+    defer args.deinit();
 
-            return TokenStream{
-                .tokens = tokens,
-            };
-        }
+    _ = args.next().?;
+
+    const filename = args.next() orelse {
+        std.debug.print("Usage: lexir <filename>\n", .{});
+        return std.process.exit(1);
     };
+    const file = try std.fs.cwd().openFile(filename, .{ .mode = .read_only });
+    defer file.close();
+
+    const source = try file.readToEndAllocOptions(allocator, 1_000_000_000, null, @alignOf(u8), 0);
+    defer allocator.free(source);
+
+    var lexer = Lexer.init(source);
+
+    while (true) {
+        const token = lexer.eat_token();
+        if (token.kind == .eof) {
+            break;
+        }
+
+        std.debug.print("{}\n", .{token});
+    }
 }
