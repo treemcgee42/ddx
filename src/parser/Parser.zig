@@ -214,7 +214,15 @@ pub fn parse_inline_math(self: *Self) !void {
 
 /// - `bracket_or_brace` is `true` if we should parse a bracket arg, `false`
 /// if we should parse a brace arg.
+///
+/// This will simply append the nodes constituting the command argument to
+/// the nodes and extra data lists. So, to get the nodes making up the command
+/// argument, the caller can look at the nodes that were most recently appended
+/// the extra data list.
 pub fn parse_command_argument(self: *Self, bracket_or_brace: bool) !void {
+    const extra_data_start_idx = self.extra_data.items.len;
+    const tok = self.current_token_idx - 1;
+
     while (true) {
         if (self.current_token_idx >= self.tokens.len) {
             try self.errors.append(.{
@@ -247,6 +255,14 @@ pub fn parse_command_argument(self: *Self, bracket_or_brace: bool) !void {
             },
         }
     }
+
+    const extra_data_end_idx = self.extra_data.items.len;
+    try self.nodes.append(self.allocator, .{
+        .kind = .grouping,
+        .token = tok,
+        .lhs = extra_data_start_idx,
+        .rhs = extra_data_end_idx,
+    });
 }
 
 /// Assumes `self.current_token_idx` is pointing to the command token.
@@ -260,8 +276,12 @@ pub fn parse_command(self: *Self) !void {
 
     self.current_token_idx += 1;
 
-    var brace_arg: Ast.NodeHandle = 0;
-    var bracket_arg: Ast.NodeHandle = 0;
+    var brace_arg_token: usize = 0;
+    var brace_args = std.ArrayList(Ast.NodeHandle).init(self.allocator);
+    defer brace_args.deinit();
+    var bracket_arg_token: usize = 0;
+    var bracket_args = std.ArrayList(Ast.NodeHandle).init(self.allocator);
+    defer bracket_args.deinit();
 
     while (true) {
         if (self.current_token_idx >= self.tokens.len) {
@@ -277,14 +297,26 @@ pub fn parse_command(self: *Self) !void {
         switch (self.tokens.items(.kind)[self.current_token_idx]) {
             .LBrace => {
                 self.current_token_idx += 1;
+
+                const brace_tok = self.current_token_idx;
+                if (brace_arg_token != 0) {
+                    brace_arg_token = brace_tok;
+                }
+
                 try self.parse_command_argument(false);
-                brace_arg = self.nodes.len - 1;
+                try brace_args.append(self.nodes.len - 1);
             },
 
             .LBracket => {
                 self.current_token_idx += 1;
+
+                const bracket_tok = self.current_token_idx;
+                if (bracket_arg_token != 0) {
+                    bracket_arg_token = bracket_tok;
+                }
+
                 try self.parse_command_argument(true);
-                bracket_arg = self.nodes.len - 1;
+                try bracket_args.append(self.nodes.len - 1);
             },
 
             else => {
@@ -293,11 +325,35 @@ pub fn parse_command(self: *Self) !void {
         }
     }
 
+    const brace_args_start = self.extra_data.items.len;
+    try self.extra_data.appendSlice(brace_args.items);
+    const brace_args_end = self.extra_data.items.len;
+
+    try self.nodes.append(self.allocator, .{
+        .kind = .grouping,
+        .token = brace_arg_token,
+        .lhs = brace_args_start,
+        .rhs = brace_args_end,
+    });
+    const lhs = self.nodes.len - 1;
+
+    const bracket_args_start = self.extra_data.items.len;
+    try self.extra_data.appendSlice(bracket_args.items);
+    const bracket_args_end = self.extra_data.items.len;
+
+    try self.nodes.append(self.allocator, .{
+        .kind = .grouping,
+        .token = bracket_arg_token,
+        .lhs = bracket_args_start,
+        .rhs = bracket_args_end,
+    });
+    const rhs = self.nodes.len - 1;
+
     try self.nodes.append(self.allocator, .{
         .kind = .command,
         .token = command_token_idx,
-        .lhs = brace_arg,
-        .rhs = bracket_arg,
+        .lhs = lhs,
+        .rhs = rhs,
     });
 }
 

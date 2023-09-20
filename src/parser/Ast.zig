@@ -180,6 +180,11 @@ pub fn format(
                 const full_node = FullNode.Caret.init(i, &self);
                 try writer.print("\n{}: {}\n", .{ i, full_node });
             },
+
+            .grouping => {
+                const full_node = FullNode.Grouping.init(i, &self);
+                try writer.print("\n{}: {}\n", .{ i, full_node });
+            },
         }
     }
 }
@@ -209,8 +214,12 @@ pub const NodeKind = enum {
     /// inside the math environment.
     inline_math,
     /// - `token`: the identifier representing the command name.
-    /// - `lhs`: the brace argument
-    /// - `rhs`: the bracket argument
+    /// - `lhs`: grouping node, representing the brace arguments. Each of the nodes
+    /// in the grouping node is itself a grouping node, representing a single brace
+    /// argument.
+    /// - `rhs`: grouping node, representing the bracket arguments. Each of the nodes
+    /// in the grouping node is itself a grouping node, representing a single bracket
+    /// argument.
     command,
     /// - `token`: the identifier representing the environment name.
     ///
@@ -225,6 +234,16 @@ pub const NodeKind = enum {
     /// - `lhs`: the argument to the caret.
     /// - `rhs`: ignored
     caret,
+
+    /// Simply a collection of nodes to be considered consecutively.
+    ///
+    /// - `token`: the first token in the grouping.
+    /// - `lhs`: index into extra data.
+    /// - `rhs`: index into extra data.
+    ///
+    /// `extra_data[lhs..rhs]` yields the indices of the nodes making up the
+    /// grouping.
+    grouping,
 };
 
 pub const Node = struct {
@@ -353,15 +372,18 @@ pub const FullNode = struct {
 
     pub const Command = struct {
         token: TokenHandle,
-        brace_arg: NodeHandle,
-        bracket_arg: NodeHandle,
+        brace_args: Grouping,
+        bracket_args: Grouping,
         ast: *const Ast,
 
         pub fn init(handle: NodeHandle, ast: *const Ast) Command {
+            const lhs = ast.nodes.items(.lhs)[handle];
+            const rhs = ast.nodes.items(.rhs)[handle];
+
             return .{
                 .token = ast.nodes.items(.token)[handle],
-                .brace_arg = ast.nodes.items(.lhs)[handle],
-                .bracket_arg = ast.nodes.items(.rhs)[handle],
+                .brace_args = Grouping.init(lhs, ast),
+                .bracket_args = Grouping.init(rhs, ast),
                 .ast = ast,
             };
         }
@@ -378,7 +400,7 @@ pub const FullNode = struct {
             const name_span = self.ast.tokens.items(.span)[self.token];
             const name = self.ast.source[name_span.start + 1 .. name_span.end];
 
-            try writer.print("Command (\n\tname: {s}\n\tbracket_arg: {}\n\tbrace_arg: {}\n)", .{ name, self.bracket_arg, self.brace_arg });
+            try writer.print("Command (\n\tname: {s}\n\tbracket_args: {}\n\tbrace_args: {}\n)", .{ name, self.bracket_args, self.brace_args });
         }
     };
 
@@ -488,6 +510,38 @@ pub const FullNode = struct {
             _ = options;
 
             try writer.print("Caret (\n\tchildren: {d}\n)", .{self.arg});
+        }
+    };
+
+    pub const Grouping = struct {
+        token: TokenHandle,
+        lhs: NodeHandle,
+        rhs: NodeHandle,
+        ast: *const Ast,
+
+        pub fn init(handle: NodeHandle, ast: *const Ast) Grouping {
+            if (ast.nodes.items(.kind)[handle] != .grouping) {
+                unreachable;
+            }
+
+            return .{
+                .token = ast.nodes.items(.token)[handle],
+                .lhs = ast.nodes.items(.lhs)[handle],
+                .rhs = ast.nodes.items(.rhs)[handle],
+                .ast = ast,
+            };
+        }
+
+        pub fn format(
+            self: Grouping,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            try writer.print("Grouping (\n\tchildren: {d}\n)", .{self.ast.extra_data.items[self.lhs..self.rhs]});
         }
     };
 };
