@@ -3,6 +3,7 @@ const Stat = std.fs.File.Stat;
 const Lexer = @import("lexer/lexer.zig").Lexer;
 const Interner = @import("lexer/interner.zig").Interner;
 const Ast = @import("parser/Ast.zig");
+const walker = @import("walker.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -27,4 +28,7 @@ pub fn main() !void {
     var ast = try Ast.init_parse(allocator, source);
     std.debug.print("{}\n", .{ast});
     defer ast.deinit();
+
+    var stdout = std.io.getStdOut().writer();
+    try walker.walk(&ast, 0, .start, 0, stdout);
 }

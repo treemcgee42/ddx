@@ -24,16 +24,48 @@ pub const NodeOrExtraDataHandle = usize;
 /// Essentially an index into the `tokens` array.
 pub const TokenHandle = usize;
 
+const Error = error{LexerError};
+
 pub fn init_parse(gpa: std.mem.Allocator, source: [:0]const u8) !Self {
     var tokens = std.MultiArrayList(Token){};
 
     var lexer = Lexer.init(source);
+    var lexer_errors: u8 = 0;
     while (true) {
         const token = lexer.eat_token();
         if (token.kind == .eof) {
             break;
         }
+
         try tokens.append(gpa, token);
+
+        if (token.kind == .invalid) {
+            std.debug.print("tokens trace:\n", .{});
+            var j: usize = @intCast(@max(0, @as(i32, @intCast(tokens.len)) - 10));
+            while (j < tokens.len) : (j += 1) {
+                std.debug.print("{}\t{}\n", .{ tokens.items(.kind)[j], tokens.items(.span)[j] });
+            }
+            const printable_error: Parser.PrintableError = .{
+                .err = .{
+                    .kind = .invalid_token,
+                    .token = tokens.len - 1,
+                    .extra = undefined,
+                },
+                .source = source,
+                .tokens = tokens,
+            };
+            std.debug.print("{}\n", .{printable_error});
+            lexer_errors += 1;
+
+            if (lexer_errors > 3) {
+                break;
+            }
+        }
+    }
+
+    if (lexer_errors > 0) {
+        tokens.deinit(gpa);
+        return error.LexerError;
     }
 
     // var i: usize = 0;
@@ -138,6 +170,16 @@ pub fn format(
                 const full_node = FullNode.Environment.init(i, &self);
                 try writer.print("\n{}: {}\n", .{ i, full_node });
             },
+
+            .underscore => {
+                const full_node = FullNode.Underscore.init(i, &self);
+                try writer.print("\n{}: {}\n", .{ i, full_node });
+            },
+
+            .caret => {
+                const full_node = FullNode.Caret.init(i, &self);
+                try writer.print("\n{}: {}\n", .{ i, full_node });
+            },
         }
     }
 }
@@ -175,6 +217,14 @@ pub const NodeKind = enum {
     /// `extra_data[lhs..rhs]` yields the indices of the nodes making up the
     /// environment.
     environment,
+    /// - `token`: the underscore.
+    /// - `lhs`: the argument to the underscore.
+    /// - `rhs`: ignored
+    underscore,
+    /// - `token`: the caret.
+    /// - `lhs`: the argument to the caret.
+    /// - `rhs`: ignored
+    caret,
 };
 
 pub const Node = struct {
@@ -303,15 +353,15 @@ pub const FullNode = struct {
 
     pub const Command = struct {
         token: TokenHandle,
-        bracket_arg: NodeHandle,
         brace_arg: NodeHandle,
+        bracket_arg: NodeHandle,
         ast: *const Ast,
 
         pub fn init(handle: NodeHandle, ast: *const Ast) Command {
             return .{
                 .token = ast.nodes.items(.token)[handle],
-                .bracket_arg = ast.nodes.items(.lhs)[handle],
-                .brace_arg = ast.nodes.items(.rhs)[handle],
+                .brace_arg = ast.nodes.items(.lhs)[handle],
+                .bracket_arg = ast.nodes.items(.rhs)[handle],
                 .ast = ast,
             };
         }
@@ -386,6 +436,58 @@ pub const FullNode = struct {
             const env_name = self.ast.source[env_name_span.start..env_name_span.end];
 
             try writer.print("Environment (\n\tname: {s}\n\tchildren: {d}\n)", .{ env_name, self.ast.extra_data.items[self.extra_data_range_start..self.extra_data_range_end] });
+        }
+    };
+
+    pub const Underscore = struct {
+        token: TokenHandle,
+        arg: NodeHandle,
+        ast: *const Ast,
+
+        pub fn init(handle: NodeHandle, ast: *const Ast) Underscore {
+            return .{
+                .token = ast.nodes.items(.token)[handle],
+                .arg = ast.nodes.items(.lhs)[handle],
+                .ast = ast,
+            };
+        }
+
+        pub fn format(
+            self: Underscore,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            try writer.print("Underscore (\n\targ: {d}\n)", .{self.arg});
+        }
+    };
+
+    pub const Caret = struct {
+        token: TokenHandle,
+        arg: NodeHandle,
+        ast: *const Ast,
+
+        pub fn init(handle: NodeHandle, ast: *const Ast) Caret {
+            return .{
+                .token = ast.nodes.items(.token)[handle],
+                .arg = ast.nodes.items(.lhs)[handle],
+                .ast = ast,
+            };
+        }
+
+        pub fn format(
+            self: Caret,
+            comptime fmt: []const u8,
+            options: std.fmt.FormatOptions,
+            writer: anytype,
+        ) !void {
+            _ = fmt;
+            _ = options;
+
+            try writer.print("Caret (\n\tchildren: {d}\n)", .{self.arg});
         }
     };
 };

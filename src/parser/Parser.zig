@@ -1,5 +1,6 @@
 const std = @import("std");
 const Token = @import("../lexer/lexer.zig").Token;
+const TokenKind = @import("../lexer/lexer.zig").TokenKind;
 const Ast = @import("./Ast.zig");
 const Lexer = @import("../lexer/lexer.zig").Lexer;
 
@@ -16,9 +17,16 @@ extra_data: std.ArrayList(Ast.NodeHandle),
 pub const Error = struct {
     kind: ParseError,
     token: Ast.TokenHandle,
+    extra: ExtraData,
+
+    pub const ExtraData = union {
+        expected: TokenKind,
+    };
 
     const ParseError = enum {
         invalid_token,
+        out_of_bounds_token,
+        expected_found,
     };
 };
 
@@ -35,6 +43,16 @@ pub const PrintableError = struct {
     ) !void {
         _ = fmt;
         _ = options;
+
+        if (self.err.kind == .out_of_bounds_token) {
+            try writer.print("out of bounds token\n", .{});
+            try writer.print("token trace:\n", .{});
+            var j: usize = self.tokens.len - 5;
+            while (j < self.tokens.len) : (j += 1) {
+                try writer.print("\t{}\t{}\n", .{ self.tokens.items(.kind)[j], self.tokens.items(.span)[j] });
+            }
+            return;
+        }
 
         const token_kind = self.tokens.items(.kind)[self.err.token];
         const span = self.tokens.items(.span)[self.err.token];
@@ -70,11 +88,22 @@ pub const PrintableError = struct {
         try writer.print("error at {}:{}: ", .{ line, column });
         switch (self.err.kind) {
             .invalid_token => try writer.print("invalid token ({s})\n", .{@tagName(token_kind)}),
+            .expected_found => try writer.print("expected {} but found {}\n", .{ self.err.extra.expected, token_kind }),
+            else => unreachable,
         }
 
-        try writer.print("{s}\n", .{source_view});
-
         i = 0;
+        while (true) : (i += 1) {
+            const c = source_view[i];
+            if (c == '\t' or c == ' ') {
+                continue;
+            }
+
+            break;
+        }
+
+        try writer.print("{s}\n", .{source_view[i..]});
+
         while (i < column - 1) : (i += 1) {
             try writer.print(" ", .{});
         }
@@ -93,6 +122,7 @@ pub fn parse_header(self: *Self) !void {
                 try self.errors.append(.{
                     .kind = .invalid_token,
                     .token = self.current_token_idx,
+                    .extra = undefined,
                 });
             },
 
@@ -134,6 +164,8 @@ pub fn parse_header(self: *Self) !void {
 }
 
 /// Assumes `self.current_token_idx` is pointing to a `RawInput` token.
+///
+/// Leaves pointing to the next token.
 pub fn parse_raw_input(self: *Self) !void {
     try self.nodes.append(self.allocator, .{
         .kind = .raw_input,
@@ -161,19 +193,9 @@ pub fn parse_inline_math(self: *Self) !void {
                 break;
             },
 
-            .RawInput => {
-                try self.parse_raw_input();
-                try nodes.append(self.nodes.len - 1);
-            },
-
             else => {
-                try self.errors.append(.{
-                    .kind = .invalid_token,
-                    .token = self.current_token_idx,
-                });
-
-                self.current_token_idx += 1;
-                return;
+                try self.eat_node();
+                try nodes.append(self.nodes.len - 1);
             },
         }
     }
@@ -190,6 +212,43 @@ pub fn parse_inline_math(self: *Self) !void {
     });
 }
 
+/// - `bracket_or_brace` is `true` if we should parse a bracket arg, `false`
+/// if we should parse a brace arg.
+pub fn parse_command_argument(self: *Self, bracket_or_brace: bool) !void {
+    while (true) {
+        if (self.current_token_idx >= self.tokens.len) {
+            try self.errors.append(.{
+                .kind = .out_of_bounds_token,
+                .token = 0,
+                .extra = undefined,
+            });
+            self.current_token_idx = self.tokens.len - 1;
+            break;
+        }
+
+        switch (self.tokens.items(.kind)[self.current_token_idx]) {
+            .RBrace => {
+                if (!bracket_or_brace) {
+                    self.current_token_idx += 1;
+                    break;
+                }
+            },
+
+            .RBracket => {
+                if (bracket_or_brace) {
+                    self.current_token_idx += 1;
+                    break;
+                }
+            },
+
+            else => {
+                try self.eat_node();
+                try self.extra_data.append(self.nodes.len - 1);
+            },
+        }
+    }
+}
+
 /// Assumes `self.current_token_idx` is pointing to the command token.
 pub fn parse_command(self: *Self) !void {
     const command_token_idx = self.current_token_idx;
@@ -201,44 +260,34 @@ pub fn parse_command(self: *Self) !void {
 
     self.current_token_idx += 1;
 
-    var brace_arg: Ast.NodeHandle = undefined;
-    var bracket_arg: Ast.NodeHandle = undefined;
+    var brace_arg: Ast.NodeHandle = 0;
+    var bracket_arg: Ast.NodeHandle = 0;
 
     while (true) {
+        if (self.current_token_idx >= self.tokens.len) {
+            try self.errors.append(.{
+                .kind = .out_of_bounds_token,
+                .token = 0,
+                .extra = undefined,
+            });
+            self.current_token_idx = self.tokens.len - 1;
+            break;
+        }
+
         switch (self.tokens.items(.kind)[self.current_token_idx]) {
             .LBrace => {
                 self.current_token_idx += 1;
-                try self.parse_raw_input();
+                try self.parse_command_argument(false);
                 brace_arg = self.nodes.len - 1;
-
-                if (self.tokens.items(.kind)[self.current_token_idx] != .RBrace) {
-                    try self.errors.append(.{
-                        .kind = .invalid_token,
-                        .token = self.current_token_idx,
-                    });
-
-                    return;
-                }
             },
 
             .LBracket => {
                 self.current_token_idx += 1;
-                try self.parse_raw_input();
+                try self.parse_command_argument(true);
                 bracket_arg = self.nodes.len - 1;
-
-                if (self.tokens.items(.kind)[self.current_token_idx] != .RBracket) {
-                    try self.errors.append(.{
-                        .kind = .invalid_token,
-                        .token = self.current_token_idx,
-                    });
-
-                    return;
-                }
             },
 
             else => {
-                brace_arg = 0;
-                bracket_arg = 0;
                 break;
             },
         }
@@ -252,6 +301,76 @@ pub fn parse_command(self: *Self) !void {
     });
 }
 
+/// Assumes `self.current_token_idx` is pointing to the underscore token.
+fn parse_underscore(self: *Self) !void {
+    const underscore_token_idx = self.current_token_idx;
+    self.current_token_idx += 1;
+
+    var arg: Ast.NodeHandle = 0;
+    switch (self.tokens.items(.kind)[self.current_token_idx]) {
+        .LBrace => {
+            self.current_token_idx += 1;
+            try self.parse_command_argument(false);
+            arg = self.nodes.len - 1;
+        },
+
+        .RawInput => {
+            try self.parse_raw_input();
+            arg = self.nodes.len - 1;
+        },
+
+        else => {
+            try self.errors.append(.{
+                .kind = .invalid_token,
+                .token = self.current_token_idx,
+                .extra = undefined,
+            });
+        },
+    }
+
+    try self.nodes.append(self.allocator, .{
+        .kind = .underscore,
+        .token = underscore_token_idx,
+        .lhs = arg,
+        .rhs = 0,
+    });
+}
+
+/// Assumes `self.current_token_idx` is pointing to the caret token.
+fn parse_caret(self: *Self) !void {
+    const caret_token_idx = self.current_token_idx;
+    self.current_token_idx += 1;
+
+    var arg: Ast.NodeHandle = 0;
+    switch (self.tokens.items(.kind)[self.current_token_idx]) {
+        .LBrace => {
+            self.current_token_idx += 1;
+            try self.parse_command_argument(false);
+            arg = self.nodes.len - 1;
+        },
+
+        .RawInput => {
+            try self.parse_raw_input();
+            arg = self.nodes.len - 1;
+        },
+
+        else => {
+            try self.errors.append(.{
+                .kind = .invalid_token,
+                .token = self.current_token_idx,
+                .extra = undefined,
+            });
+        },
+    }
+
+    try self.nodes.append(self.allocator, .{
+        .kind = .caret,
+        .token = caret_token_idx,
+        .lhs = arg,
+        .rhs = 0,
+    });
+}
+
 /// Assumes `self.current_token_idx` is pointing to the first token of the opening
 /// command, e.g. `\begin`.
 fn parse_environment(self: *Self) !void {
@@ -262,8 +381,9 @@ fn parse_environment(self: *Self) !void {
 
     if (self.tokens.items(.kind)[self.current_token_idx] != .LBrace) {
         try self.errors.append(.{
-            .kind = .invalid_token,
+            .kind = .expected_found,
             .token = self.current_token_idx,
+            .extra = .{ .expected = .LBrace },
         });
 
         self.current_token_idx += 1;
@@ -274,8 +394,9 @@ fn parse_environment(self: *Self) !void {
 
     if (self.tokens.items(.kind)[self.current_token_idx] != .RawInput) {
         try self.errors.append(.{
-            .kind = .invalid_token,
+            .kind = .expected_found,
             .token = self.current_token_idx,
+            .extra = .{ .expected = .RawInput },
         });
 
         self.current_token_idx += 1;
@@ -290,8 +411,9 @@ fn parse_environment(self: *Self) !void {
 
     if (self.tokens.items(.kind)[self.current_token_idx] != .RBrace) {
         try self.errors.append(.{
-            .kind = .invalid_token,
+            .kind = .expected_found,
             .token = self.current_token_idx,
+            .extra = .{ .expected = .RBrace },
         });
 
         self.current_token_idx += 1;
@@ -301,6 +423,17 @@ fn parse_environment(self: *Self) !void {
     self.current_token_idx += 1;
 
     while (true) {
+        if (self.current_token_idx >= self.tokens.items(.span).len) {
+            try self.errors.append(.{
+                .kind = .out_of_bounds_token,
+                .token = 0,
+                .extra = undefined,
+            });
+            // Reset the current token index to the last token.
+            self.current_token_idx = self.tokens.len - 1;
+            break;
+        }
+
         if (self.tokens.items(.kind)[self.current_token_idx] == .command) {
             const command_idx = self.current_token_idx;
             const span = self.tokens.items(.span)[self.current_token_idx];
@@ -350,10 +483,19 @@ fn eat_node(self: *Self) anyerror!void {
             return self.parse_command();
         },
 
+        .underscore => {
+            return self.parse_underscore();
+        },
+
+        .caret => {
+            return self.parse_caret();
+        },
+
         else => {
             try self.errors.append(.{
                 .kind = .invalid_token,
                 .token = self.current_token_idx,
+                .extra = undefined,
             });
 
             self.current_token_idx += 1;
@@ -378,6 +520,7 @@ pub fn parse_document(self: *Self) !void {
                 try self.errors.append(.{
                     .kind = .invalid_token,
                     .token = self.current_token_idx,
+                    .extra = undefined,
                 });
 
                 self.current_token_idx += 1;
@@ -389,6 +532,17 @@ pub fn parse_document(self: *Self) !void {
     }
 
     while (true) {
+        if (self.current_token_idx >= self.tokens.items(.span).len) {
+            try self.errors.append(.{
+                .kind = .out_of_bounds_token,
+                .token = 0,
+                .extra = undefined,
+            });
+            // Reset the current token index to the last token.
+            self.current_token_idx = self.tokens.len - 1;
+            break;
+        }
+
         if (self.tokens.items(.kind)[self.current_token_idx] == .command) {
             // Break if it's an `\end{document}`.
             const span = self.tokens.items(.span)[self.current_token_idx];

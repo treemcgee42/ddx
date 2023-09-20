@@ -24,6 +24,8 @@ pub const TokenKind = union(enum) {
     RBrace,
     LBracket,
     RBracket,
+    underscore,
+    caret,
 
     eof,
     invalid,
@@ -138,12 +140,39 @@ pub const Lexer = struct {
                     };
                 },
 
+                '%' => {
+                    if (self.state == .start) {
+                        var cc = self.source[self.current_source_index];
+                        while (cc != '\n' and cc != 0) {
+                            self.current_source_index += 1;
+                            cc = self.source[self.current_source_index];
+                        }
+
+                        start = self.current_source_index;
+
+                        continue;
+                    }
+
+                    end = self.current_source_index;
+
+                    return .{ .kind = .Newline, .span = .{
+                        .start = start,
+                        .end = end,
+                    } };
+                },
+
                 '\\' => {
-                    if (self.state == .accepting_raw_input) {
+                    if (self.state == .prev_was_backslash) {
+                        token_kind = .RawInput;
+                        self.current_source_index += 1;
+                        continue;
+                    }
+
+                    if (self.state != .start) {
                         end = self.current_source_index;
 
                         return .{
-                            .kind = .RawInput,
+                            .kind = token_kind,
                             .span = .{
                                 .start = start,
                                 .end = end,
@@ -173,10 +202,58 @@ pub const Lexer = struct {
                     self.current_source_index += 1;
                 },
 
-                '0'...'9', '=', '.', ',', '!', '/' => {
+                '0'...'9', '+', '-', '*', '=', '.', ',', '!', '/', ':', '(', ')', '&', '\'' => {
                     token_kind = .RawInput;
                     self.state = .accepting_raw_input;
                     self.current_source_index += 1;
+                },
+
+                '_' => {
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+                    return .{
+                        .kind = .underscore,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
+                },
+
+                '^' => {
+                    if (self.state != .start) {
+                        end = self.current_source_index;
+
+                        return .{
+                            .kind = token_kind,
+                            .span = .{
+                                .start = start,
+                                .end = end,
+                            },
+                        };
+                    }
+
+                    self.current_source_index += 1;
+                    end = self.current_source_index;
+                    return .{
+                        .kind = .caret,
+                        .span = .{
+                            .start = start,
+                            .end = end,
+                        },
+                    };
                 },
 
                 '[' => {
