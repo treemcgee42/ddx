@@ -1,0 +1,14 @@
+---
+interface Props {
+  num: number;
+}
+
+const { num } = Astro.props;
+---
+
+<div class="flex flex-wrap w-full">
+  <p class="font-bold">Remark {num}.{" "}</p>
+  <p>
+    <slot />
+  </p>
+</div>

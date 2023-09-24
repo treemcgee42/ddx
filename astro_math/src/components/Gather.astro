@@ -1,0 +1,13 @@
+---
+import DisplayMath from "./DisplayMath.astro";
+
+interface Props {
+  str: string;
+}
+
+const { str } = Astro.props;
+---
+
+<DisplayMath
+  str={String.raw`\begin{gather*}` + str + String.raw`\end{gather*}`}
+/>
