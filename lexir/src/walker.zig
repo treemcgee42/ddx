@@ -305,6 +305,15 @@ pub fn walk(ast: *const Ast, current_node: usize, state: State, indent_level: u8
             }
         },
 
-        else => {},
+        .caret => {
+            try writer.print("^", .{});
+
+            const full_node = Ast.FullNode.Caret.init(current_node, ast);
+            try walk(ast, full_node.arg, state, indent_level, writer);
+        },
+
+        else => {
+            std.debug.print("unimplemented: {}\n", .{ast.nodes.items(.kind)[current_node]});
+        },
     }
 }

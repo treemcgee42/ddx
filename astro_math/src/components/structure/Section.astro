@@ -1,0 +1,11 @@
+---
+interface Props {
+  title: string;
+}
+
+const { title } = Astro.props;
+
+import { incrementAndGetCounter } from "./section_counter";
+---
+
+<h2 class="text-2xl font-bold my-4">{incrementAndGetCounter(1) + ". " + title}</h2>

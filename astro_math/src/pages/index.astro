@@ -10,6 +10,12 @@ import Remark from "../components/Remark.astro";
 import Proof from "../components/Proof.astro";
 import Proposition from "../components/Proposition.astro";
 
+import Title from "../components/structure/Title.astro";
+import { reset } from "../components/structure/section_counter";
+reset();
+import Section from "../components/structure/Section.astro";
+import Subsection from "../components/structure/Subsection.astro";
+
 var counter = 1;
 function getAndIncrement() {
   return counter++;
@@ -17,117 +23,88 @@ function getAndIncrement() {
 ---
 
 <Layout title="Welcome to Astro.">
-  <Definition num={getAndIncrement()}>
-    The solutions to <InlineMath str={String.raw`ax^2 + bx + c = 0`} /> are:
-    <DisplayMath str={String.raw`x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}`} />
-     This is an equation environment:
-    <DisplayMath
-      str={String.raw`\begin{equation*} x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a} \end{equation*}`}
-    />
-  </Definition>
+  <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-16 my-8">
+    <Title title="Welcome to Astro." />
 
-   This is a gather environment:
-  <Gather str={String.raw`a+b \\ c+d`} />
+    <p>
+      Here we will demonstrate various <InlineMath str={String.raw`\LaTeX`} />
+       features for which we have provided bindings.
+    </p>
 
-   This is an align environment:
-  <Align str={String.raw`a+&b \\ c&+d`} />
+    <Section title="Math" />
 
-  <h1>the derivative</h1>
+    <Subsection title="Inline, display math" />
 
-  <h2>partial, directional derivatives</h2>
+    <p>
+      This is some inline math:
+      <InlineMath str={String.raw` \sqrt{2} `} />
+       and this is some display math:
+      <DisplayMath str={String.raw` \sqrt{2} `} />
+       (with some text after).
+    </p>
 
-  <Para num={getAndIncrement()}>
-    The goal is to understand a function by knowing how it varies with each
-    variable.
-  </Para>
+    <Subsection title="Math environments" />
 
-  <Definition num={getAndIncrement()}>
-    Consider a function <InlineMath
-      str={String.raw` f:U \subset \mathbb{ R } \to \mathbb{ R } `}
-    /> , where <InlineMath str={String.raw` U \subset \mathbb{ R } `} /> is
-    open. Let <InlineMath str={String.raw` a \in  U `} /> . For <InlineMath
-      str={String.raw` j=1,  \dots, n `}
-    /> , define
-    <DisplayMath
-      str={String.raw`\frac{\partial  f }{\partial  x _ j }  (a) = D _ jf(a) =  \lim _{ t \to  0 }\frac{ f(a+te _ j)-f(a) }{ t } `}
-    />
-     provided this limit exists.
-  </Definition>
+     This is a gather environment:
+    <Gather str={String.raw`a+b \\ c+d`} />
 
-  <Para num={getAndIncrement()}>
-    The partial derivatives are measuring rate of change along the coordinate
-    axes <InlineMath str={String.raw` e _ j `} /> . We can generalize the above
-    definition to an arbitrary direction (vector!) <InlineMath
-      str={String.raw` v `}
-    /> :
-  </Para>
+     This is an align environment:
+    <Align str={String.raw`a+&b \\ c&+d`} />
 
-  <Definition num={getAndIncrement()}>
-    Let <InlineMath
-      str={String.raw` f:U \subset \mathbb{ R } \to \mathbb{ R } `}
-    /> , where <InlineMath str={String.raw` U \subset \mathbb{ R } `} /> is
-    open. Let <InlineMath str={String.raw` a \in  U `} /> . For a nonzero <InlineMath
-      str={String.raw` v \in \mathbb{ R } `}
-    /> , define the directional derivative of <InlineMath
-      str={String.raw` f `}
-    /> at <InlineMath str={String.raw` a `} /> in the direction of <InlineMath
-      str={String.raw` v `}
-    /> to be
-    <DisplayMath
-      str={String.raw` D _ vf(a) =  \lim _{ t \to  0 }\frac{ f(a+tv)-f(a) }{ t } `}
-    />
-     provided this limit exists.
-  </Definition>
+    <Section title="Environments" />
 
-  <Remark num={getAndIncrement()}>
-    <InlineMath
-      str={String.raw` D _ j f(a) =  \frac{\partial  f }{\partial  x _ j }  (a) = D _{ e _ j } f(a) `}
-    /> .
-  </Remark>
+    <Subsection title="Paragraph" />
 
-  <Para num={getAndIncrement()}>
-    The directional derivative depends not only on the direction of <InlineMath
-      str={String.raw` v `}
-    /> , but also the magnitude of <InlineMath str={String.raw` v `} /> :
-  </Para>
+    <Para num={getAndIncrement()}>
+      The goal is to understand a function by knowing how it varies with each
+      variable. The partial derivatives are measuring rate of change along the
+      coordinate axes <InlineMath str={String.raw` e _ j `} /> . We can
+      generalize the above definition to an arbitrary direction (vector!) <InlineMath
+        str={String.raw` v `}
+      /> :
+    </Para>
 
-  <Proposition num={getAndIncrement()}>
-    <InlineMath str={String.raw` D _{ cv } f(a) = cD _ vf(a) `} /> .
-  </Proposition>
+    <Subsection title="Definition" />
 
-  <Proof>
-    <Align
-      str={String.raw` D _{ cv } f(a) =&  \lim _{ t \to  0 }\frac{ f(a+tv) - f(a) }{ t }  = c \lim _{ t \to  0 }\frac{ f(a+tv) - f(a) }{ ct }  \\  =& c \lim _{ s \to  0 }\frac{ f(a+sv) - f(a) }{ s }  = c D _ vf(a).
+    <Definition num={getAndIncrement()}>
+      Consider a function <InlineMath
+        str={String.raw` f:U \subset \mathbb{ R }^n \to \mathbb{ R } `}
+      /> , where <InlineMath str={String.raw` U \subset \mathbb{ R }^n `} /> is
+      open. Let <InlineMath str={String.raw` a \in  U `} /> . For <InlineMath
+        str={String.raw` j=1,  \dots, n `}
+      /> , define
+      <DisplayMath
+        str={String.raw`\frac{\partial  f }{\partial  x _ j }  (a) = D _ jf(a) =  \lim _{ t \to  0 }\frac{ f(a+te _ j)-f(a) }{ t } `}
+      />
+       provided this limit exists.
+    </Definition>
+
+    <Subsection title="Remark" />
+
+    <Remark num={getAndIncrement()}>
+      So <InlineMath str={String.raw` D _ vf(a) `} /> is not merely the
+      instantaneous rate of change by an observer at <InlineMath
+        str={String.raw` a `}
+      /> in the direction of <InlineMath str={String.raw` v `} /> , but perhaps
+      the instantaneous rate of change of an observer at <InlineMath
+        str={String.raw` a `}
+      /> moving with velocity <InlineMath str={String.raw` v `} /> (not only the
+      direction of the observer matters, but also their speed).
+    </Remark>
+
+    <Subsection title="Proposition" />
+
+    <Proposition num={getAndIncrement()}>
+      <InlineMath str={String.raw` D _{ cv } f(a) = cD _ vf(a) `} /> .
+    </Proposition>
+
+    <Subsection title="Proof" />
+
+    <Proof>
+      <Align
+        str={String.raw` D _{ cv } f(a) =&  \lim _{ t \to  0 }\frac{ f(a+tv) - f(a) }{ t }  = c \lim _{ t \to  0 }\frac{ f(a+tv) - f(a) }{ ct }  \\  =& c \lim _{ s \to  0 }\frac{ f(a+sv) - f(a) }{ s }  = c D _ vf(a).
 	`}
-    />
-  </Proof>
-
-  <Remark num={getAndIncrement()}>
-    So <InlineMath str={String.raw` D _ vf(a) `} /> is not merely the
-    instantaneous rate of change by an observer at <InlineMath
-      str={String.raw` a `}
-    /> in the direction of <InlineMath str={String.raw` v `} /> , but perhaps
-    the instantaneous rate of change of an observer at <InlineMath
-      str={String.raw` a `}
-    /> moving with velocity <InlineMath str={String.raw` v `} /> (not only the
-    direction of the observer matters, but also their speed).
-  </Remark>
-
-  <Remark num={getAndIncrement()}>
-    In cases where <InlineMath
-      str={String.raw` f:U \subset \mathbb{ R } \to \mathbb{ R } `}
-    /> consists of functions we can easily differentiate using single-variable
-    calculus rules, the following substitution can help in computing the <InlineMath
-      str={String.raw` D _ vf(a) `}
-    /> :
-    <Gather
-      str={String.raw` \phi:  \mathbb{ R } \to \mathbb{ R }  \\  t  \mapsto  f(a+tv).
-	`}
-    />
-     Then
-    <DisplayMath
-      str={String.raw` D _ vf(a) =  \lim _{ t \to  0 }\frac{ f(a+tv)-f(a) }{ t }  =  \lim _{ t \to  0 }\frac{ \phi(t)-  \phi(0) }{ t }  =   \phi'(0).
-	`}
-    />
-  </Remark>
+      />
+    </Proof>
+  </div>
 </Layout>
